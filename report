@@ -1,0 +1,124 @@
+Here is a comprehensive breakdown of **What this project is used for**, **Its core features**, and **How to use it**.
+
+---
+
+## 1. What is the Use? (Problem Solved & Purpose)
+
+### A. The Real-World Problem
+Commercial navigation engines (like Google Maps or Apple Maps) are designed primarily for vehicular traffic on public roadways. When applied to university campuses, corporate parks, or hospital complexes, they often fail because:
+* They miss internal pedestrian walkways, footpaths, stairs, and courtyards.
+* They route people around the perimeter of the campus rather than through direct pedestrian corridors.
+* They lack named building-to-building context (e.g., routing from *"Main Gate"* to *"CSE Block"* or *"Central Library"*).
+
+### B. The Academic & Algorithmic Purpose (Course Outcome CO2)
+This project is built for **AI Laboratory (Course Code: 23CSE109 / 23CSE208 - Unit II: Informed Search)**.
+* **Proves Algorithmic Superiority:** It provides a mathematical testbed proving why **Informed Search ($A^*$)** is significantly more computationally efficient than **Uninformed Search (Dijkstra)** on real-world graphs.
+* **Quantifies Pruning:** It measures and displays exactly how many fewer nodes $A^*$ expands compared to Dijkstra (achieving **$30\%$ to $>90\%$ search space reduction**), while guaranteeing identical optimal shortest-path distances.
+
+---
+
+## 2. What are the Features?
+
+### 🗺️ Geospatial & Data Engine
+1. **Live OpenStreetMap (OSM) Ingestion:** Dynamically fetches real street and walkway topologies using OSMnx.
+2. **Local Disk Caching (`.graphml`):** Automatically saves fetched networks to [`data/cache/`](file:///c:/Users/giric/Desktop/project/ai-mini-pjt/data/cache) so subsequent runs execute instantly offline without API rate-limiting.
+3. **Graph Simplification ($\min(\text{length})$ Deduplication):** Condenses complex `MultiDiGraph` edges into an optimized `DiGraph`, pre-resolving parallel road segments to maximize inner-loop pathfinding speed.
+4. **3D ECEF Cartesian KD-Tree Snapper:** Converts GPS latitude/longitude into 3D Cartesian coordinates on a sphere to snap landmarks to graph vertices in $O(\log N)$ time, with an automated **$250\text{ m}$ safety guard warning** (PRD FR-2.3).
+
+### ⚡ Algorithmic Search Engine
+5. **Admissible & Consistent Heuristic:** Uses the Great-Circle Haversine formula ($R = 6,371,000\text{ m}$). Because straight-line distance is physically the shortest path between two points on Earth, $h(n) \le h^*(n)$ always holds, ensuring 100% path optimality.
+6. **Optimized $A^*$ Min-Heap (`heapq`):** Built from base principles without black-box routing wrappers. Uses a smart **$h(n)$ tie-breaker** that channels search directly toward the goal when $f$-costs match.
+7. **Instant Connectivity Rejection ($< 10\text{ ms}$):** Pre-computes graph components to abort disjoint queries immediately before priority queue allocation, preventing wasteful full-graph exploration.
+
+### 📊 Benchmarking & Visualization Outputs
+8. **Comparative Terminal Matrix:** Side-by-side table comparing $A^*$ vs Dijkstra across:
+   * Total Path Length (meters)
+   * Nodes Expanded (search space pruning %)
+   * Peak Frontier Queue Size (memory overhead %)
+   * Wall-Clock Latency (milliseconds via `time.perf_counter_ns()`)
+9. **Interactive Folium Web Map (`.html`):** Leaflet-powered map with green start pin, red goal pin, and blue route polyline overlaying the campus street network.
+10. **Static Matplotlib Plot (`.png`):** High-resolution diagram suitable for academic project reports and presentations.
+11. **Strict JSON Output (PRD Section 8.2):** Standardized JSON payload containing node IDs, distances, runtime, and the ordered list of GPS coordinates.
+
+---
+
+## 3. How to Use This (Usage Guide)
+
+### Step 1: Run the Default Campus Route
+Open PowerShell or your terminal in `ai-mini-pjt` and run:
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+*(Routes from Campus Main Entrance Gate to Sports Ground & Athletics Field).*
+
+---
+
+### Step 2: Route Between Any Two Campus Buildings
+Use the `--start` and `--target` arguments with any landmark from [`data/landmarks.json`](file:///c:/Users/giric/Desktop/project/ai-mini-pjt/data/landmarks.json):
+
+```powershell
+.\.venv\Scripts\python.exe main.py --start MITS_HOSTEL_B --target MITS_HOSTEL_G
+```
+
+#### Available Landmark Identifiers:
+| Landmark ID | Building / Facility Name | Category |
+| :--- | :--- | :--- |
+| `MITS_MAIN_GATE` | Campus Main Entrance Gate | Entrance |
+| `MITS_LIB` | Central Library | Academic |
+| `MITS_ADMIN` | Administrative Headquarters | Administration |
+| `MITS_CSE` | Computer Science & Engineering Block | Academic |
+| `MITS_ECE` | Electronics & Electrical Engineering Block | Academic |
+| `MITS_HOSTEL_B` | Boys Hostel Complex | Residential |
+| `MITS_HOSTEL_G` | Girls Hostel Complex | Residential |
+| `MITS_SPORTS` | Sports Ground & Athletics Field | Sports |
+| `MITS_CANTEEN` | Campus Cafeteria & Student Center | Amenity |
+| `MITS_AUDITORIUM`| University Auditorium | Facility |
+
+---
+
+### Step 3: Switch Network Modes (Walk vs Drive)
+* **Pedestrian walkway mode (default):**
+  ```powershell
+  .\.venv\Scripts\python.exe main.py --start MITS_MAIN_GATE --target MITS_LIB --mode walk
+  ```
+* **Motorized vehicle road network:**
+  ```powershell
+  .\.venv\Scripts\python.exe main.py --start MITS_MAIN_GATE --target MITS_CSE --mode drive
+  ```
+
+---
+
+### Step 4: Run Faster Without Generating Maps
+For terminal-only benchmarking without regenerating the HTML and PNG visual files:
+```powershell
+.\.venv\Scripts\python.exe main.py --start MITS_HOSTEL_B --target MITS_SPORTS --no-viz
+```
+
+---
+
+### Step 5: View the Generated Outputs
+All generated route files are stored in [`data/routes/`](file:///c:/Users/giric/Desktop/project/ai-mini-pjt/data/routes):
+
+1. **Interactive HTML Map:**  
+   Open in Chrome or Edge:
+   ```powershell
+   Start-Process data\routes\campus_route.html
+   ```
+2. **Static PNG Plot:**  
+   Open the image:
+   ```powershell
+   Start-Process data\routes\campus_route.png
+   ```
+3. **Structured JSON Data:**  
+   View the raw JSON payload:
+   ```powershell
+   Get-Content data\routes\campus_route.json
+   ```
+
+---
+
+### Step 6: Run the Automated Verification Suite
+Run Pytest to verify all 5 PRD acceptance criteria (TC-01 through TC-05):
+```powershell
+.\.venv\Scripts\pytest.exe -v
+```

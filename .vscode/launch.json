@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Run Campus Route Planner (Default)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--start", "MITS_MAIN_GATE",
+        "--target", "MITS_SPORTS"
+      ]
+    },
+    {
+      "name": "Python: Run Campus Route Planner (Hostel B -> Hostel G)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--start", "MITS_HOSTEL_B",
+        "--target", "MITS_HOSTEL_G"
+      ]
+    },
+    {
+      "name": "Python: Run Pytest Test Suite",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-v"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "landmark_id": "MITS_MAIN_GATE",
+    "name": "Campus Main Entrance Gate",
+    "latitude": 13.62720,
+    "longitude": 78.50150,
+    "category": "Entrance"
+  },
+  {
+    "landmark_id": "MITS_LIB",
+    "name": "Central Library",
+    "latitude": 13.62880,
+    "longitude": 78.50240,
+    "category": "Academic"
+  },
+  {
+    "landmark_id": "MITS_ADMIN",
+    "name": "Administrative Headquarters",
+    "latitude": 13.62820,
+    "longitude": 78.50200,
+    "category": "Administration"
+  },
+  {
+    "landmark_id": "MITS_CSE",
+    "name": "Computer Science & Engineering Block",
+    "latitude": 13.62950,
+    "longitude": 78.50320,
+    "category": "Academic"
+  },
+  {
+    "landmark_id": "MITS_ECE",
+    "name": "Electronics & Electrical Engineering Block",
+    "latitude": 13.62910,
+    "longitude": 78.50410,
+    "category": "Academic"
+  },
+  {
+    "landmark_id": "MITS_HOSTEL_B",
+    "name": "Boys Hostel Complex",
+    "latitude": 13.63050,
+    "longitude": 78.50200,
+    "category": "Residential"
+  },
+  {
+    "landmark_id": "MITS_HOSTEL_G",
+    "name": "Girls Hostel Complex",
+    "latitude": 13.62750,
+    "longitude": 78.50450,
+    "category": "Residential"
+  },
+  {
+    "landmark_id": "MITS_SPORTS",
+    "name": "Sports Ground & Athletics Field",
+    "latitude": 13.63120,
+    "longitude": 78.50480,
+    "category": "Sports"
+  },
+  {
+    "landmark_id": "MITS_CANTEEN",
+    "name": "Campus Cafeteria & Student Center",
+    "latitude": 13.62850,
+    "longitude": 78.50350,
+    "category": "Amenity"
+  },
+  {
+    "landmark_id": "MITS_AUDITORIUM",
+    "name": "University Auditorium",
+    "latitude": 13.62780,
+    "longitude": 78.50280,
+    "category": "Facility"
+  }
+]
