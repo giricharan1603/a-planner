@@ -6,19 +6,16 @@ import sys
 from pathlib import Path
 from tabulate import tabulate
 
-from src.config import (
-    DEFAULT_CAMPUS_LOCATION,
+from src.graph import (
     DEFAULT_CAMPUS_COORDS,
     DEFAULT_CAMPUS_RADIUS_METERS,
-    DEFAULT_NETWORK_MODE,
     LANDMARKS_FILE,
     ROUTES_DIR,
+    SpatialSnapper,
+    fetch_campus_graph,
 )
-from src.graph_loader import fetch_campus_graph
 from src.router import run_astar, run_dijkstra
-from src.serializer import save_result_to_json
-from src.spatial_index import SpatialSnapper
-from src.visualizer import render_folium_map, render_matplotlib_plot
+from src.visualizer import render_folium_map, render_matplotlib_plot, save_result_to_json
 
 
 def load_landmarks(filepath: Path) -> dict:
@@ -32,9 +29,8 @@ def main():
     parser = argparse.ArgumentParser(description="Campus Landmark A* Route Planner & Benchmarking Engine")
     parser.add_argument("--start", type=str, default="MITS_MAIN_GATE", help="Origin landmark ID")
     parser.add_argument("--target", type=str, default="MITS_SPORTS", help="Destination landmark ID")
-    parser.add_argument("--mode", type=str, default=DEFAULT_NETWORK_MODE, choices=["walk", "drive"], help="Routing network mode")
+    parser.add_argument("--mode", type=str, default="walk", choices=["walk", "drive"], help="Routing network mode")
     parser.add_argument("--dist", type=int, default=DEFAULT_CAMPUS_RADIUS_METERS, help="Campus search radius in meters")
-    parser.add_argument("--location", type=str, default=None, help="Optional campus location query for OSMnx")
     parser.add_argument("--no-viz", action="store_true", help="Disable HTML and PNG map generation")
     args = parser.parse_args()
 
@@ -71,8 +67,7 @@ def main():
 
     print("[-] Ingesting and preprocessing campus road network...")
     G, node_coords, component_map = fetch_campus_graph(
-        location_query=args.location,
-        center_point=DEFAULT_CAMPUS_COORDS if args.location is None else None,
+        center_point=DEFAULT_CAMPUS_COORDS,
         dist=args.dist,
         mode=args.mode,
     )

@@ -1,0 +1,22 @@
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & Caching
+.pytest_cache/
+cache/
+
+# VS Code User State
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+
+# OS Artifacts
+Thumbs.db
+.DS_Store

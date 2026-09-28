@@ -57,20 +57,13 @@ ai-mini-pjt/
 │   ├── landmarks.json              # Campus landmark catalog with coordinates
 │   └── routes/                     # Exported JSON payloads and Folium HTML maps
 ├── src/
-│   ├── config.py                   # Global constants (Earth radius, snapping thresholds)
-│   ├── exceptions.py               # Custom exceptions (PathNotFoundError, etc.)
-│   ├── graph_loader.py             # OSMnx ingestion, caching, and MultiDiGraph -> DiGraph simplifier
-│   ├── spatial_index.py            # 3D ECEF KD-Tree coordinate snapping and threshold check
-│   ├── heuristic.py                # Pure Haversine formula (admissible & consistent)
-│   ├── router.py                   # Custom A* and Dijkstra solvers with heapq instrumentation
-│   ├── visualizer.py               # Folium interactive HTML and Matplotlib static renderers
-│   └── serializer.py               # Strict JSON schema builder conforming to PRD 8.2
+│   ├── __init__.py
+│   ├── graph.py                    # OSMnx ingestion, caching, DiGraph simplifier, 3D KD-Tree snapping
+│   ├── router.py                   # Custom A* and Dijkstra solvers with Haversine heuristic
+│   └── visualizer.py               # Folium HTML, Matplotlib PNG, and strict JSON export
 ├── tests/
-│   ├── conftest.py                 # Graph fixtures and synthetic grid generators
-│   ├── test_connectivity.py        # TC-04: Disconnected fast-failure validation (<10ms)
-│   ├── test_heuristic.py           # TC-02: Admissibility and consistency checks
-│   ├── test_router_optimality.py   # TC-01 & TC-05: Exact distance parity & zero-length identity
-│   └── test_benchmarks.py          # TC-03: >= 40% node expansion reduction validation
+│   ├── __init__.py
+│   └── test_router.py              # Consolidated test suite for all 5 PRD acceptance criteria
 ├── requirements.txt                # Pinned production dependencies
 ├── main.py                         # CLI entry point for execution, benchmarking, and visualization
 └── README.md

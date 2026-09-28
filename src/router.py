@@ -1,18 +1,23 @@
-"""Custom A* and Dijkstra Search Engines with Base Principles (FR-3.1 - FR-3.6, FR-4.1 - FR-4.2)."""
+"""Custom A* and Dijkstra search engines with Haversine heuristic (FR-3, FR-4)."""
 
 import heapq
+import math
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 import networkx as nx
 
-from src.exceptions import PathNotFoundError
-from src.heuristic import make_haversine_heuristic
+from src.graph import EARTH_RADIUS_METERS
+
+
+class PathNotFoundError(Exception):
+    """Raised when no connected path exists between origin and destination."""
+    pass
 
 
 @dataclass
 class SearchResult:
-    """Structured pathfinding and benchmark result payload."""
+    """Benchmark and path results payload."""
     status: str
     algorithm: str
     start_node_id: int
@@ -25,23 +30,19 @@ class SearchResult:
     path_coordinates: List[Dict[str, float]]
 
 
-def _reconstruct_path(
-    came_from: Dict[int, int],
-    current: int,
-    node_coords: Dict[int, Tuple[float, float]],
-) -> Tuple[List[int], List[Dict[str, float]]]:
-    """Reconstruct path from start to target using came_from predecessor map."""
-    path = [current]
-    while current in came_from:
-        current = came_from[current]
-        path.append(current)
-    path.reverse()
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float, radius: float = EARTH_RADIUS_METERS) -> float:
+    """Compute Great-Circle spherical distance in meters (FR-3.3)."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * (math.sin(dlam / 2.0)**2)
+    return radius * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - min(1.0, max(0.0, a))))
 
-    coords = [
-        {"lat": node_coords[nid][0], "lon": node_coords[nid][1]}
-        for nid in path
-    ]
-    return path, coords
+
+def make_haversine_heuristic(target_node: int, node_coords: Dict[int, Tuple[float, float]]) -> Callable[[int], float]:
+    """Optimized closure computing h(n) against target coordinates."""
+    t_lat, t_lon = node_coords[target_node]
+    return lambda node: haversine_distance(node_coords[node][0], node_coords[node][1], t_lat, t_lon)
 
 
 def search(
@@ -53,67 +54,30 @@ def search(
     component_map: Optional[Dict[int, int]] = None,
     algorithm_name: str = "A_STAR",
 ) -> SearchResult:
-    """Execute heuristic-guided search (A* or Dijkstra) from base principles using heapq.
-
-    Args:
-        G: Simplified networkx.DiGraph.
-        start_node: Origin vertex ID.
-        target_node: Destination vertex ID.
-        node_coords: Mapping of node_id -> (lat, lon).
-        heuristic_fn: Callable returning h(node). If None or returns 0, acts as Dijkstra.
-        component_map: Optional mapping of node_id -> component_id for fast-failure checks.
-        algorithm_name: Label ('A_STAR' or 'DIJKSTRA').
-
-    Returns:
-        SearchResult containing path, distances, and execution benchmarks.
-
-    Raises:
-        PathNotFoundError: If disconnected or unreachable.
-    """
+    """Execute priority queue search (A* or Dijkstra) from base principles."""
     t_start = time.perf_counter_ns()
 
-    # FR-3.6 & NFR: Instant structural connectivity validation (<10 ms)
+    # Pre-search connectivity fast-rejection (<10ms) (FR-3.6)
     if component_map is not None:
-        start_comp = component_map.get(start_node)
-        target_comp = component_map.get(target_node)
-        if start_comp is None or target_comp is None or start_comp != target_comp:
-            t_end = time.perf_counter_ns()
-            elapsed_ms = (t_end - t_start) / 1_000_000.0
-            raise PathNotFoundError(
-                f"No connected path exists between {start_node} and {target_node} "
-                f"(components {start_comp} vs {target_comp}). Terminated in {elapsed_ms:.2f}ms."
-            )
+        c1, c2 = component_map.get(start_node), component_map.get(target_node)
+        if c1 is None or c2 is None or c1 != c2:
+            elapsed_ms = (time.perf_counter_ns() - t_start) / 1_000_000.0
+            raise PathNotFoundError(f"Disconnected subcomponents ({c1} vs {c2}). Aborted in {elapsed_ms:.2f}ms.")
 
-    # TC-05: Identity route check
+    # Identity route handling (TC-05)
     if start_node == target_node:
-        t_end = time.perf_counter_ns()
-        elapsed_ms = (t_end - t_start) / 1_000_000.0
+        elapsed_ms = (time.perf_counter_ns() - t_start) / 1_000_000.0
         coords = [{"lat": node_coords[start_node][0], "lon": node_coords[start_node][1]}]
-        return SearchResult(
-            status="SUCCESS",
-            algorithm=algorithm_name,
-            start_node_id=start_node,
-            target_node_id=target_node,
-            total_distance_meters=0.0,
-            nodes_expanded=1,
-            peak_frontier_size=1,
-            execution_time_ms=elapsed_ms,
-            path=[start_node],
-            path_coordinates=coords,
-        )
+        return SearchResult("SUCCESS", algorithm_name, start_node, target_node, 0.0, 1, 1, elapsed_ms, [start_node], coords)
 
-    # Fallback to zero heuristic for uninformed Dijkstra
-    if heuristic_fn is None:
-        h_func = lambda _: 0.0
-    else:
-        h_func = heuristic_fn
+    h_func = heuristic_fn if heuristic_fn else (lambda _: 0.0)
 
-    # Priority queue min-heap: (f_score, h_score, tie_breaker_counter, node_id)
-    # Breaking ties by smaller h_score channels exploration towards the goal.
+    # Priority queue min-heap: (f_score, h_score, counter, node_id)
+    # Secondary sort by h_score channels search toward goal on f-score ties
     counter = 0
     start_h = h_func(start_node)
     open_heap = [(start_h, start_h, counter, start_node)]
-    
+
     g_score: Dict[int, float] = {start_node: 0.0}
     came_from: Dict[int, int] = {}
     closed_set: set = set()
@@ -125,93 +89,45 @@ def search(
         peak_frontier_size = max(peak_frontier_size, len(open_heap))
         f, h, _, current = heapq.heappop(open_heap)
 
-        # Lazy deletion: discard stale heap entries
-        current_g = g_score[current]
-        if f > current_g + h + 1e-9:
-            continue
-
-        if current in closed_set:
+        # Lazy deletion for stale heap records
+        if f > g_score[current] + h + 1e-9 or current in closed_set:
             continue
 
         closed_set.add(current)
         nodes_expanded += 1
 
-        # Goal check
         if current == target_node:
-            t_end = time.perf_counter_ns()
-            elapsed_ms = (t_end - t_start) / 1_000_000.0
-            path, coords = _reconstruct_path(came_from, current, node_coords)
-            return SearchResult(
-                status="SUCCESS",
-                algorithm=algorithm_name,
-                start_node_id=start_node,
-                target_node_id=target_node,
-                total_distance_meters=g_score[target_node],
-                nodes_expanded=nodes_expanded,
-                peak_frontier_size=peak_frontier_size,
-                execution_time_ms=elapsed_ms,
-                path=path,
-                path_coordinates=coords,
-            )
+            elapsed_ms = (time.perf_counter_ns() - t_start) / 1_000_000.0
+            path = [current]
+            while current in came_from:
+                current = came_from[current]
+                path.append(current)
+            path.reverse()
+            coords = [{"lat": node_coords[n][0], "lon": node_coords[n][1]} for n in path]
+            return SearchResult("SUCCESS", algorithm_name, start_node, target_node, g_score[target_node], nodes_expanded, peak_frontier_size, elapsed_ms, path, coords)
 
-        # Relax outward edges
         for neighbor in G.successors(current):
             if neighbor in closed_set:
                 continue
-
             edge_len = G[current][neighbor].get("length", 1.0)
-            tentative_g = current_g + edge_len
+            tentative_g = g_score[current] + edge_len
 
             if tentative_g < g_score.get(neighbor, float("inf")):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g
-                neighbor_h = h_func(neighbor)
-                neighbor_f = tentative_g + neighbor_h
+                nh = h_func(neighbor)
                 counter += 1
-                heapq.heappush(open_heap, (neighbor_f, neighbor_h, counter, neighbor))
+                heapq.heappush(open_heap, (tentative_g + nh, nh, counter, neighbor))
 
-    t_end = time.perf_counter_ns()
-    elapsed_ms = (t_end - t_start) / 1_000_000.0
-    raise PathNotFoundError(
-        f"Search space exhausted without reaching target node {target_node}. "
-        f"Explored {nodes_expanded} nodes in {elapsed_ms:.2f}ms."
-    )
+    elapsed_ms = (time.perf_counter_ns() - t_start) / 1_000_000.0
+    raise PathNotFoundError(f"Unreachable target node {target_node}. Explored {nodes_expanded} nodes.")
 
 
-def run_astar(
-    G: nx.DiGraph,
-    start_node: int,
-    target_node: int,
-    node_coords: Dict[int, Tuple[float, float]],
-    component_map: Optional[Dict[int, int]] = None,
-) -> SearchResult:
-    """Run informed A* search with the Haversine Great-Circle heuristic (FR-3.1 - FR-3.5)."""
-    h_func = make_haversine_heuristic(target_node, node_coords)
-    return search(
-        G=G,
-        start_node=start_node,
-        target_node=target_node,
-        node_coords=node_coords,
-        heuristic_fn=h_func,
-        component_map=component_map,
-        algorithm_name="A_STAR",
-    )
+def run_astar(G: nx.DiGraph, start_node: int, target_node: int, node_coords: Dict[int, Tuple[float, float]], component_map: Optional[Dict[int, int]] = None) -> SearchResult:
+    """Run informed A* search with Haversine heuristic (FR-3.1 - FR-3.5)."""
+    return search(G, start_node, target_node, node_coords, make_haversine_heuristic(target_node, node_coords), component_map, "A_STAR")
 
 
-def run_dijkstra(
-    G: nx.DiGraph,
-    start_node: int,
-    target_node: int,
-    node_coords: Dict[int, Tuple[float, float]],
-    component_map: Optional[Dict[int, int]] = None,
-) -> SearchResult:
-    """Run baseline uninformed uniform-cost Dijkstra search (h(n) = 0) (FR-4.1)."""
-    return search(
-        G=G,
-        start_node=start_node,
-        target_node=target_node,
-        node_coords=node_coords,
-        heuristic_fn=None,
-        component_map=component_map,
-        algorithm_name="DIJKSTRA",
-    )
+def run_dijkstra(G: nx.DiGraph, start_node: int, target_node: int, node_coords: Dict[int, Tuple[float, float]], component_map: Optional[Dict[int, int]] = None) -> SearchResult:
+    """Run uninformed Dijkstra search baseline (h(n) = 0) (FR-4.1)."""
+    return search(G, start_node, target_node, node_coords, None, component_map, "DIJKSTRA")
