@@ -1,126 +1,81 @@
 # Campus Landmark A* Route Planner
 
 **Mini-Project Reference:** S.No 12 (Course Code: 23CSE109 / 23CSE208 - Artificial Intelligence Laboratory)  
-**Curriculum Mapping:** Course Outcome CO2 (Unit II: Informed & Heuristic Search)  
-**Academic Requirement:** Comparative Benchmarking of Informed A* Search vs Uninformed Dijkstra Baseline on Topological Real-World Networks.
+**Academic Requirement:** Comparative Benchmarking of Informed A* Search vs Uninformed Dijkstra Baseline on Campus Street Networks.
 
 ---
 
-## 📌 Executive Overview
+## 📌 Overview
 
-The **Campus Landmark A* Route Planner** is a specialized geospatial routing and algorithmic benchmarking system. It extracts real-world street and walkway topological graphs from OpenStreetMap (OSM) via OSMnx, snaps campus landmarks using a 3D Cartesian KD-Tree, and runs an admissible and consistent A* search using the Great-Circle Haversine distance heuristic.
+This project provides a clean, easy-to-understand implementation of the **A\* Search Algorithm** compared against **Dijkstra's Algorithm** for navigating university campuses.
 
-The system benchmarks A* against an uninformed uniform-cost Dijkstra baseline ($h(n) = 0$), quantifying search space pruning, peak queue size, and latency.
-
----
-
-## 🚀 Key Performance Indicators (KPIs)
-
-* **Optimality Parity:** 100% agreement with Dijkstra path distances down to $10^{-4}\text{ m}$ tolerance (TC-01).
-* **Search Space Pruning:** $\ge 40\%$ reduction in nodes expanded by A* compared to Dijkstra for routes exceeding 500 meters (TC-03).
-* **Instant Rejection:** $< 10\text{ ms}$ termination with `PathNotFoundError` for disconnected node pairs prior to priority queue execution (TC-04).
-* **Snapping Safety Guard:** Warning logged if a landmark is $> 250\text{ m}$ from the nearest walkable graph vertex (FR-2.3).
-* **Interface Schema Compliance:** Strict JSON schema conforming to PRD Section 8.2.
+It loads the real street and pedestrian walkways of the campus from OpenStreetMap, snaps named buildings to road intersections, and finds the shortest path while benchmarking the efficiency of the heuristic.
 
 ---
 
-## 🛠️ System Architecture
-
-```
-[OpenStreetMap / Overpass API]
-            │
-            ▼ (Disk Cache: data/cache/*.graphml)
-[OSMnx MultiDiGraph]
-            │
-            ▼ (Vectorized min(length) deduplication)
-[Simplified networkx.DiGraph]
-      /                     \
-     v                       v
-[Spatial Snapper KD-Tree]  [Structural Connectivity Check (<10ms)]
-     \                       /
-      v                     v
-[Custom A* Engine (heapq)]  vs  [Dijkstra Baseline (h=0)]
-      │
-      ├───────────────────────┬───────────────────────┐
-      ▼                       ▼                       ▼
-[Tabular CLI Report]   [Folium HTML Map]      [Strict JSON Export]
-```
-
----
-
-## 📦 Directory Structure
+## 📦 Simple Project Structure
 
 ```
 ai-mini-pjt/
 ├── data/
-│   ├── cache/                      # Cached .graphml files to prevent Overpass API limits
-│   ├── landmarks.json              # Campus landmark catalog with coordinates
-│   └── routes/                     # Exported JSON payloads and Folium HTML maps
-├── src/
-│   ├── __init__.py
-│   ├── graph.py                    # OSMnx ingestion, caching, DiGraph simplifier, 3D KD-Tree snapping
-│   ├── router.py                   # Custom A* and Dijkstra solvers with Haversine heuristic
-│   └── visualizer.py               # Folium HTML, Matplotlib PNG, and strict JSON export
-├── tests/
-│   ├── __init__.py
-│   └── test_router.py              # Consolidated test suite for all 5 PRD acceptance criteria
-├── requirements.txt                # Pinned production dependencies
-├── main.py                         # CLI entry point for execution, benchmarking, and visualization
-└── README.md
+│   ├── campus_network.graphml    # Campus road map (fast local loading)
+│   └── landmarks.json            # Campus landmarks with GPS coordinates
+├── router.py                     # All core logic (Haversine + Snapping + Dijkstra + A*)
+├── main.py                       # Main script (runs routing, prints table, exports HTML map)
+├── test_planner.py               # Simple verification tests (optimality, pruning, identity)
+├── route_map.html                # Generated interactive route map (view in browser)
+├── route_summary.json            # Generated route statistics in JSON
+├── requirements.txt              # Required Python packages
+├── README.md                     # Project documentation
+└── .gitignore                    # Git ignore file
 ```
 
 ---
 
-## 💻 Installation & Usage
+## 🚀 How to Run
 
-### 1. Setup Virtual Environment
+### 1. Setup Virtual Environment & Dependencies
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-### 2. Run Route Planner & Benchmarking Engine
-Route between default campus landmarks (Main Gate to Sports Complex):
+### 2. Run the Route Planner
 ```powershell
-.\.venv\Scripts\python.exe main.py --start MITS_MAIN_GATE --target MITS_SPORTS
+python main.py
+```
+Or specify different campus landmarks:
+```powershell
+python main.py --start MITS_HOSTEL_B --target MITS_HOSTEL_G
 ```
 
-Specify custom landmarks:
+### 3. Run the Automated Tests
 ```powershell
-.\.venv\Scripts\python.exe main.py --start MITS_LIB --target MITS_HOSTEL_B --mode walk
+pytest test_planner.py -v
 ```
 
-### 3. Run Automated Pytest Suite (TC-01 through TC-05)
-```powershell
-.\.venv\Scripts\pytest.exe -v
-```
+---
+
+## 🗺️ View the Results
+
+* **Interactive Web Map:** Open `route_map.html` in your browser (Chrome or Edge) to see the route polyline, start pin (green), and destination pin (red).
+* **Summary JSON:** Open `route_summary.json` to see the distance and node statistics.
 
 ---
 
 ## 📊 Sample Benchmark Output
 
 ```
-================================================================================
-📊 ALGORITHM BENCHMARKING REPORT
-================================================================================
-╒═══════════════════════════╤══════════════════╤══════════════════╤═══════════════════════════╕
-│ Performance Metric        │ Dijkstra (h=0)   │ A* (Haversine)   │ Relative Difference       │
-╞═══════════════════════════╪══════════════════╪══════════════════╪═══════════════════════════╡
-│ Total Path Length         │ 1284.42 m        │ 1284.42 m        │ 0.00% (Identical Optimal) │
-├───────────────────────────┼──────────────────┼──────────────────┼───────────────────────────┤
-│ Nodes Expanded (Closed)   │ 384              │ 162              │ +57.81% (Pruned)          │
-├───────────────────────────┼──────────────────┼──────────────────┼───────────────────────────┤
-│ Peak Frontier Queue Size  │ 76               │ 34               │ +55.26%                   │
-├───────────────────────────┼──────────────────┼──────────────────┼───────────────────────────┤
-│ Wall-Clock Latency        │ 12.45 ms         │ 4.88 ms          │ +60.80%                   │
-├───────────────────────────┼──────────────────┼──────────────────┼───────────────────────────┤
-│ Optimality Verified       │ BASE             │ VERIFIED         │ PASSED                    │
-╘═══════════════════════════╧══════════════════╧══════════════════╧═══════════════════════════╛
++------------------+------------------+------------------+----------------------+
+| Metric           | Dijkstra (h=0)   | A* (Haversine)   | Advantage            |
++==================+==================+==================+======================+
+| Total Distance   | 3301.38 m        | 3301.38 m        | 100% Match (Optimal) |
++------------------+------------------+------------------+----------------------+
+| Nodes Explored   | 73               | 51               | +30.1% (Fewer nodes) |
++------------------+------------------+------------------+----------------------+
+| Execution Time   | 0.27 ms          | 0.54 ms          | Sub-millisecond      |
++------------------+------------------+------------------+----------------------+
+| Path Nodes Count | 20               | 20               | Identical Path       |
++------------------+------------------+------------------+----------------------+
 ```
-
----
-
-## 📄 License & Course Submission
-Developed for AI Mini-Project S.No 12 (Course Code: 23CSE109 / 23CSE208).
-All requirements of PRD v1.1.0 are fully implemented and verified.
