@@ -63,10 +63,17 @@ def main():
     parser = argparse.ArgumentParser(description="Campus Landmark Route Planner (A* vs Dijkstra)")
     parser.add_argument("--start", type=str, default="MITS_HOSTEL_B", help="Start landmark ID")
     parser.add_argument("--target", type=str, default="MITS_HOSTEL_G", help="Destination landmark ID")
+    parser.add_argument("--serve", action="store_true", help="Launch interactive web server & dashboard")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind web server (default: 8000)")
     args = parser.parse_args()
 
+    if args.serve:
+        from server import run_server
+        run_server(port=args.port)
+        return
+
     print("=" * 75)
-    print("📍 CAMPUS LANDMARK ROUTE PLANNER (A* vs Dijkstra)")
+    print("[*] CAMPUS LANDMARK ROUTE PLANNER (A* vs Dijkstra)")
     print("=" * 75)
 
     # 1. Load landmarks
