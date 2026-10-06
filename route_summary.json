@@ -1,0 +1,8 @@
+{
+  "start": "MITS_HOSTEL_B",
+  "target": "MITS_HOSTEL_G",
+  "distance_m": 3301.38,
+  "nodes_astar": 51,
+  "nodes_dijkstra": 73,
+  "pruning_pct": 30.14
+}
