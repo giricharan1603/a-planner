@@ -1,8 +1,4 @@
-"""
-server.py - Web Server & REST API for Campus Landmark A* Route Planner
-Lightweight, zero-dependency server using Python's standard library.
-Serves the institutional dashboard, Leaflet map client, privacy/terms pages, and route APIs.
-"""
+"""Web server and REST API for Campus Route Planner."""
 
 import json
 import mimetypes
@@ -10,174 +6,155 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from router import astar, dijkstra, load_campus_graph, snap_to_node
+from router import astar, dijkstra, load_campus_graph, build_coord_index, snap_to_node
 
-BASE_DIR = Path(__file__).resolve().parent
-PUBLIC_DIR = BASE_DIR / "public"
-LANDMARKS_FILE = BASE_DIR / "data" / "landmarks.json"
+BASE = Path(__file__).resolve().parent
+PUBLIC = BASE / "public"
 
-# Load graph and landmarks once at startup
-print("[*] Initializing Campus Network Graph...")
-CAMPUS_GRAPH = load_campus_graph()
-print(f"[+] Loaded {CAMPUS_GRAPH.number_of_nodes()} intersections and {CAMPUS_GRAPH.number_of_edges()} paths.")
+# --- Startup: load once ---
+print("[*] Loading campus network...")
+GRAPH = load_campus_graph()
+COORDS = build_coord_index(GRAPH)
+print(f"[+] {GRAPH.number_of_nodes()} nodes, {GRAPH.number_of_edges()} edges.")
 
-with open(LANDMARKS_FILE, "r", encoding="utf-8") as f:
-    LANDMARKS_DATA = json.load(f)
-LANDMARKS_DICT = {item["landmark_id"]: item for item in LANDMARKS_DATA}
+with open(BASE / "data" / "landmarks.json", encoding="utf-8") as f:
+    LANDMARKS_LIST = json.load(f)
+LANDMARKS = {lm["landmark_id"]: lm for lm in LANDMARKS_LIST}
 
-# Pre-extract road network edge coordinates for background map rendering
-NETWORK_EDGES = [
-    [
-        [CAMPUS_GRAPH.nodes[u]["y"], CAMPUS_GRAPH.nodes[u]["x"]],
-        [CAMPUS_GRAPH.nodes[v]["y"], CAMPUS_GRAPH.nodes[v]["x"]],
-    ]
-    for u, v in CAMPUS_GRAPH.edges()
-]
+# Pre-snap all landmarks to graph nodes
+SNAPPED = {}
+for lid, lm in LANDMARKS.items():
+    node, dist = snap_to_node(COORDS, lm["latitude"], lm["longitude"])
+    SNAPPED[lid] = {"node": node, "snap_dist": round(dist, 1)}
+
+# Pre-serialize network edges (sent once via GET)
+_EDGES = [[list(COORDS[u][::-1][::-1]), list(COORDS[v][::-1][::-1])] for u, v in GRAPH.edges()]
+# Store as [lat, lon] pairs
+NETWORK_EDGES = [[[COORDS[u][0], COORDS[u][1]], [COORDS[v][0], COORDS[v][1]]] for u, v in GRAPH.edges()]
+NETWORK_JSON = json.dumps(NETWORK_EDGES).encode("utf-8")
+
+# Cache static files in memory
+_FILE_CACHE = {}
+def _read_cached(path: Path) -> bytes:
+    if path not in _FILE_CACHE:
+        _FILE_CACHE[path] = path.read_bytes()
+    return _FILE_CACHE[path]
 
 
-class RouteAppHandler(SimpleHTTPRequestHandler):
-    """Handles static files, HTML pages, and JSON API routes."""
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=str(PUBLIC), **kw)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(PUBLIC_DIR), **kwargs)
+    def log_message(self, fmt, *args):
+        pass  # Suppress per-request logging for performance
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        if path in ("/", "/index.html"):
-            self._serve_file(PUBLIC_DIR / "index.html", "text/html")
-        elif path in ("/privacy", "/privacy.html"):
-            self._serve_file(PUBLIC_DIR / "privacy.html", "text/html")
-        elif path in ("/terms", "/terms.html"):
-            self._serve_file(PUBLIC_DIR / "terms.html", "text/html")
-        elif path in ("/favicon.svg", "/favicon.ico"):
-            self._serve_file(PUBLIC_DIR / "favicon.svg", "image/svg+xml")
-        elif path == "/api/landmarks":
-            self._send_json(LANDMARKS_DATA)
+        p = urlparse(self.path).path
+        if p in ("/", "/index.html"):
+            self._file(PUBLIC / "index.html", "text/html")
+        elif p in ("/privacy", "/privacy.html"):
+            self._file(PUBLIC / "privacy.html", "text/html")
+        elif p in ("/terms", "/terms.html"):
+            self._file(PUBLIC / "terms.html", "text/html")
+        elif p in ("/favicon.svg", "/favicon.ico"):
+            self._file(PUBLIC / "favicon.svg", "image/svg+xml")
+        elif p == "/api/landmarks":
+            self._json_bytes(json.dumps(LANDMARKS_LIST).encode())
+        elif p == "/api/network":
+            self._json_bytes(NETWORK_JSON)
         else:
-            # Fallback to standard static file serving from public/
-            target = PUBLIC_DIR / path.lstrip("/")
+            target = PUBLIC / p.lstrip("/")
             if target.exists() and target.is_file():
-                mime, _ = mimetypes.guess_type(str(target))
-                self._serve_file(target, mime or "application/octet-stream")
+                mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+                self._file(target, mime)
             else:
-                self.send_error(404, "Page Not Found")
+                self.send_error(404)
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/route":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length).decode("utf-8")
-                payload = json.loads(body)
-
-                start_id = payload.get("start", "MITS_MAIN_GATE")
-                target_id = payload.get("target", "MITS_SPORTS")
-
-                if start_id not in LANDMARKS_DICT or target_id not in LANDMARKS_DICT:
-                    self._send_json({"error": "Invalid landmark ID"}, status=400)
-                    return
-
-                start_lm = LANDMARKS_DICT[start_id]
-                target_lm = LANDMARKS_DICT[target_id]
-
-                start_node, d1 = snap_to_node(CAMPUS_GRAPH, start_lm["latitude"], start_lm["longitude"])
-                target_node, d2 = snap_to_node(CAMPUS_GRAPH, target_lm["latitude"], target_lm["longitude"])
-
-                # Run both algorithms
-                dist_d, path_d, nodes_d, time_d = dijkstra(CAMPUS_GRAPH, start_node, target_node)
-                dist_a, path_a, nodes_a, time_a = astar(CAMPUS_GRAPH, start_node, target_node)
-
-                pruning_pct = ((nodes_d - nodes_a) / nodes_d * 100.0) if nodes_d > 0 else 0.0
-
-                path_coords = [
-                    [CAMPUS_GRAPH.nodes[n]["y"], CAMPUS_GRAPH.nodes[n]["x"]]
-                    for n in path_a
-                ]
-
-                response_data = {
-                    "status": "SUCCESS",
-                    "origin": {
-                        "id": start_id,
-                        "name": start_lm["name"],
-                        "lat": start_lm["latitude"],
-                        "lon": start_lm["longitude"],
-                        "node_id": start_node,
-                        "snap_dist": round(d1, 1),
-                    },
-                    "destination": {
-                        "id": target_id,
-                        "name": target_lm["name"],
-                        "lat": target_lm["latitude"],
-                        "lon": target_lm["longitude"],
-                        "node_id": target_node,
-                        "snap_dist": round(d2, 1),
-                    },
-                    "dijkstra": {
-                        "distance_meters": round(dist_d, 2),
-                        "nodes_expanded": nodes_d,
-                        "elapsed_ms": round(time_d, 2),
-                    },
-                    "astar": {
-                        "distance_meters": round(dist_a, 2),
-                        "nodes_expanded": nodes_a,
-                        "elapsed_ms": round(time_a, 2),
-                    },
-                    "pruning_percentage": round(pruning_pct, 2),
-                    "path_coordinates": path_coords,
-                    "network_edges": NETWORK_EDGES,
-                }
-
-                self._send_json(response_data)
-            except Exception as e:
-                self._send_json({"error": str(e)}, status=500)
-        else:
-            self.send_error(404, "Endpoint Not Found")
-
-    def _serve_file(self, filepath: Path, content_type: str):
+        if urlparse(self.path).path != "/api/route":
+            self.send_error(404)
+            return
         try:
-            with open(filepath, "rb") as f:
-                content = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(content)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception:
-            self.send_error(500, "Error reading file")
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            sid = body.get("start", "MITS_MAIN_GATE")
+            tid = body.get("target", "MITS_SPORTS")
+            if sid not in LANDMARKS or tid not in LANDMARKS:
+                self._json({"error": "Invalid landmark ID"}, 400)
+                return
 
-    def _send_json(self, data: dict, status: int = 200):
-        body = json.dumps(data).encode("utf-8")
+            sn, tn = SNAPPED[sid]["node"], SNAPPED[tid]["node"]
+            dd, _, nd, td = dijkstra(GRAPH, sn, tn)
+            da, pa, na, ta = astar(GRAPH, sn, tn, COORDS)
+            pruning = ((nd - na) / nd * 100) if nd > 0 else 0
+
+            start_lat = LANDMARKS[sid]["latitude"]
+            start_lon = LANDMARKS[sid]["longitude"]
+            dest_lat = LANDMARKS[tid]["latitude"]
+            dest_lon = LANDMARKS[tid]["longitude"]
+
+            path_pts = [[start_lat, start_lon]]
+            path_pts.extend([[COORDS[n][0], COORDS[n][1]] for n in pa])
+            path_pts.append([dest_lat, dest_lon])
+
+            self._json({
+                "status": "SUCCESS",
+                "origin": {
+                    "id": sid,
+                    "name": LANDMARKS[sid]["name"],
+                    "lat": start_lat,
+                    "lon": start_lon,
+                    "snap_dist": SNAPPED[sid]["snap_dist"],
+                },
+                "destination": {
+                    "id": tid,
+                    "name": LANDMARKS[tid]["name"],
+                    "lat": dest_lat,
+                    "lon": dest_lon,
+                    "snap_dist": SNAPPED[tid]["snap_dist"],
+                },
+                "dijkstra": {"distance_meters": round(dd, 2), "nodes_expanded": nd, "elapsed_ms": round(td, 2)},
+                "astar": {"distance_meters": round(da, 2), "nodes_expanded": na, "elapsed_ms": round(ta, 2)},
+                "pruning_percentage": round(pruning, 2),
+                "path_coordinates": path_pts,
+            })
+        except Exception as e:
+            self._json({"error": str(e)}, 500)
+
+    def _file(self, path: Path, ctype: str):
+        try:
+            data = _read_cached(path)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", len(data))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception:
+            self.send_error(500)
+
+    def _json(self, obj, status=200):
+        self._json_bytes(json.dumps(obj).encode(), status)
+
+    def _json_bytes(self, body: bytes, status=200):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
 
 def run_server(port: int = 8000):
-    server = ThreadingHTTPServer(("127.0.0.1", port), RouteAppHandler)
-    print("=" * 75)
-    print(f"[*] Campus Landmark Route Planner Web Application")
-    print(f"[+] Server running at: http://127.0.0.1:{port}/")
-    print(f"[+] Dashboard:         http://127.0.0.1:{port}/")
-    print(f"[+] Privacy Policy:    http://127.0.0.1:{port}/privacy")
-    print(f"[+] Terms of Service:  http://127.0.0.1:{port}/terms")
-    print("=" * 75)
-    print("Press Ctrl+C to stop the server.")
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"[+] http://127.0.0.1:{port}/")
     try:
-        server.serve_forever()
+        srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n[*] Server shutdown cleanly.")
-        server.server_close()
+        print("\n[*] Stopped.")
+        srv.server_close()
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Run Campus Landmark Route Planner Web Server")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind server (default: 8000)")
-    args = parser.parse_args()
-    run_server(port=args.port)
+    p = argparse.ArgumentParser()
+    p.add_argument("--port", type=int, default=8000)
+    run_server(port=p.parse_args().port)

@@ -1,200 +1,248 @@
 /**
- * Campus Landmark Route Planner
- * Client-Side Controller & Leaflet Map Renderer
+ * Campus Route Planner - Client Controller & Leaflet Map
  */
 
-let mapInstance = null;
-let routeLayer = null;
-let backgroundLayer = null;
-let markersLayer = null;
+let map, routeLayer, bgLayer, markerLayer, landmarksLayer;
+let networkLoaded = false;
+let landmarksList = [];
+let landmarksMap = {};
 
-// Initialize on DOM load
+// Cache DOM references once
+const $ = (id) => document.getElementById(id);
+
 document.addEventListener("DOMContentLoaded", () => {
   initMap();
   loadLandmarks();
 
-  const form = document.getElementById("route-form");
-  if (form) {
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      calculateRoute();
-    });
-  }
+  // Listen for selection changes to update GPS coordinate displays
+  $("origin-select").addEventListener("change", updateCoordinateDisplays);
+  $("dest-select").addEventListener("change", updateCoordinateDisplays);
+
+  // Manual compute triggered ONLY on form submit (no auto-run)
+  $("route-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    computeRoute();
+  });
 });
 
 function initMap() {
-  // Center around MITS campus coordinates
   const campusCenter = [13.6288, 78.5024];
+  map = L.map("map-container").setView(campusCenter, 16);
 
-  mapInstance = L.map("map-container", {
-    zoomControl: true,
-    attributionControl: true,
-  }).setView(campusCenter, 16);
-
-  // Clean OpenStreetMap base layer
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  }).addTo(mapInstance);
+  }).addTo(map);
 
-  backgroundLayer = L.layerGroup().addTo(mapInstance);
-  routeLayer = L.layerGroup().addTo(mapInstance);
-  markersLayer = L.layerGroup().addTo(mapInstance);
+  bgLayer = L.layerGroup().addTo(map);
+  landmarksLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+
+  // Display live GPS coordinates on mouse movement and map click
+  map.on("mousemove", (e) => {
+    const status = $("map-status");
+    if (status && !status.dataset.locked) {
+      status.textContent = `Cursor: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+    }
+  });
+
+  map.on("click", (e) => {
+    const status = $("map-status");
+    if (status) {
+      status.textContent = `Selected: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+      status.dataset.locked = "true";
+      setTimeout(() => { delete status.dataset.locked; }, 3000);
+    }
+  });
 }
 
 async function loadLandmarks() {
-  const originSelect = document.getElementById("origin-select");
-  const destSelect = document.getElementById("dest-select");
-
   try {
     const res = await fetch("/api/landmarks");
-    const landmarks = await res.json();
+    landmarksList = await res.json();
+    landmarksMap = {};
 
-    originSelect.innerHTML = "";
-    destSelect.innerHTML = "";
+    const orig = $("origin-select");
+    const dest = $("dest-select");
 
-    landmarks.forEach((item, index) => {
-      const opt1 = new Option(`${item.name} (${item.category})`, item.landmark_id);
-      const opt2 = new Option(`${item.name} (${item.category})`, item.landmark_id);
+    // Populate dropdowns and lookup map
+    const opts = landmarksList.map((l) => {
+      landmarksMap[l.landmark_id] = l;
+      return `<option value="${l.landmark_id}">${l.name} (${l.category})</option>`;
+    }).join("");
 
-      originSelect.add(opt1);
-      destSelect.add(opt2);
-    });
+    orig.innerHTML = opts;
+    dest.innerHTML = opts;
 
-    // Default selection: Hostel B to Hostel G, or Main Gate to Sports
-    if (landmarks.length >= 2) {
-      originSelect.value = "MITS_MAIN_GATE";
-      destSelect.value = "MITS_SPORTS";
-    }
+    // Default landmark selections
+    orig.value = "MITS_MAIN_GATE";
+    dest.value = "MITS_SPORTS";
 
-    // Trigger initial calculation
-    calculateRoute();
-  } catch (err) {
-    console.error("Failed to load landmarks catalog:", err);
+    updateCoordinateDisplays();
+    renderAllLandmarkMarkers();
+
+    // Fetch background street network once
+    loadNetwork();
+
+    // NOTE: Manual execution only. computeRoute() is NOT called automatically.
+  } catch (e) {
+    console.error("Landmarks load failed:", e);
+    $("map-status").textContent = "Failed to load landmarks catalog.";
   }
 }
 
-async function calculateRoute() {
-  const originId = document.getElementById("origin-select").value;
-  const destId = document.getElementById("dest-select").value;
-  const statusEl = document.getElementById("map-status");
+function updateCoordinateDisplays() {
+  const origId = $("origin-select").value;
+  const destId = $("dest-select").value;
 
-  setLoadingState(true);
-  statusEl.textContent = "Computing optimal paths...";
+  const origLm = landmarksMap[origId];
+  const destLm = landmarksMap[destId];
+
+  if (origLm) {
+    $("origin-coords").textContent = `GPS: Lat ${origLm.latitude.toFixed(5)}, Lon ${origLm.longitude.toFixed(5)}`;
+  }
+  if (destLm) {
+    $("dest-coords").textContent = `GPS: Lat ${destLm.latitude.toFixed(5)}, Lon ${destLm.longitude.toFixed(5)}`;
+  }
+}
+
+function renderAllLandmarkMarkers() {
+  landmarksLayer.clearLayers();
+
+  landmarksList.forEach((lm) => {
+    const dot = L.circleMarker([lm.latitude, lm.longitude], {
+      radius: 6,
+      fillColor: "#475569",
+      color: "#ffffff",
+      weight: 1.5,
+      opacity: 1,
+      fillOpacity: 0.85,
+    });
+
+    const popupHtml = `
+      <div style="font-family: var(--font); font-size: 12px; line-height: 1.4;">
+        <b>${lm.name}</b><br>
+        <span style="color: #64748b;">${lm.category}</span><br>
+        <code>Lat: ${lm.latitude.toFixed(5)}, Lon: ${lm.longitude.toFixed(5)}</code>
+        <div style="margin-top: 6px; display: flex; gap: 4px;">
+          <button style="padding: 2px 6px; font-size: 11px; cursor: pointer;" onclick="setAsOrigin('${lm.landmark_id}')">Set Origin</button>
+          <button style="padding: 2px 6px; font-size: 11px; cursor: pointer;" onclick="setAsDest('${lm.landmark_id}')">Set Dest</button>
+        </div>
+      </div>
+    `;
+
+    dot.bindPopup(popupHtml);
+    dot.addTo(landmarksLayer);
+  });
+}
+
+// Global helpers for popup buttons
+window.setAsOrigin = function(id) {
+  $("origin-select").value = id;
+  updateCoordinateDisplays();
+  map.closePopup();
+};
+
+window.setAsDest = function(id) {
+  $("dest-select").value = id;
+  updateCoordinateDisplays();
+  map.closePopup();
+};
+
+async function loadNetwork() {
+  if (networkLoaded) return;
+  try {
+    const res = await fetch("/api/network");
+    const edges = await res.json();
+    L.polyline(edges, { color: "#94a3b8", weight: 1.5, opacity: 0.5 }).addTo(bgLayer);
+    networkLoaded = true;
+  } catch (e) {
+    console.error("Network load failed:", e);
+  }
+}
+
+async function computeRoute() {
+  const status = $("map-status");
+  setLoading(true);
+  status.textContent = "Computing optimal route...";
+
+  const startId = $("origin-select").value;
+  const targetId = $("dest-select").value;
 
   try {
-    const response = await fetch("/api/route", {
+    const res = await fetch("/api/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start: originId, target: destId }),
+      body: JSON.stringify({ start: startId, target: targetId }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Routing request failed with status: ${response.status}`);
-    }
+    if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+    const d = await res.json();
 
-    const data = await response.json();
-    renderRoute(data);
-    updateMetrics(data);
-    statusEl.textContent = `Path resolved in ${data.astar.elapsed_ms.toFixed(2)} ms`;
-  } catch (error) {
-    console.error("Route calculation error:", error);
-    statusEl.textContent = "Pathfinding failed for selected vertices.";
+    renderPath(d);
+    updateMetrics(d);
+    status.textContent = `A* Path resolved in ${d.astar.elapsed_ms.toFixed(2)} ms (${d.astar.distance_meters.toFixed(1)} m)`;
+  } catch (e) {
+    console.error("Routing error:", e);
+    status.textContent = "Pathfinding failed for selected landmarks.";
   } finally {
-    setLoadingState(false);
+    setLoading(false);
   }
 }
 
-function renderRoute(data) {
-  // Clear previous traces
+function renderPath(d) {
   routeLayer.clearLayers();
-  markersLayer.clearLayers();
+  markerLayer.clearLayers();
 
-  const coords = data.path_coordinates;
-  if (!coords || coords.length === 0) return;
+  const pts = d.path_coordinates;
+  if (!pts || !pts.length) return;
 
-  // Background street network (render once if not populated)
-  if (data.network_edges && backgroundLayer.getLayers().length === 0) {
-    data.network_edges.forEach((segment) => {
-      L.polyline(segment, {
-        color: "#94a3b8",
-        weight: 1.5,
-        opacity: 0.55,
-      }).addTo(backgroundLayer);
-    });
-  }
-
-  // Draw active path
-  const polyline = L.polyline(coords, {
+  const line = L.polyline(pts, {
     color: "#1e40af",
     weight: 5,
     opacity: 0.95,
   }).addTo(routeLayer);
 
-  // Custom Origin Marker (Solid Green)
-  const originIcon = L.divIcon({
-    className: "custom-pin origin-pin",
-    html: `<div style="background-color:#15803d;color:#ffffff;font-size:11px;font-weight:700;padding:3px 7px;border-radius:4px;border:1px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);white-space:nowrap;">Origin</div>`,
-    iconSize: [50, 20],
-    iconAnchor: [25, 10],
+  const pin = (label, color) => L.divIcon({
+    className: "",
+    html: `<div style="background:${color};color:#fff;font-size:11px;font-weight:700;padding:3px 7px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);white-space:nowrap">${label}</div>`,
+    iconAnchor: [30, 10],
   });
 
-  // Custom Destination Marker (Solid Red)
-  const destIcon = L.divIcon({
-    className: "custom-pin dest-pin",
-    html: `<div style="background-color:#b91c1c;color:#ffffff;font-size:11px;font-weight:700;padding:3px 7px;border-radius:4px;border:1px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);white-space:nowrap;">Destination</div>`,
-    iconSize: [75, 20],
-    iconAnchor: [37, 10],
-  });
+  const origCoord = [d.origin.lat, d.origin.lon];
+  const destCoord = [d.destination.lat, d.destination.lon];
 
-  const startCoord = coords[0];
-  const targetCoord = coords[coords.length - 1];
+  L.marker(origCoord, { icon: pin("Origin", "#15803d") })
+    .bindPopup(`<b>Origin:</b> ${d.origin.name}<br><b>GPS:</b> Lat ${d.origin.lat.toFixed(5)}, Lon ${d.origin.lon.toFixed(5)}<br>Road snap: ${d.origin.snap_dist} m`)
+    .addTo(markerLayer);
 
-  L.marker(startCoord, { icon: originIcon })
-    .bindPopup(`<strong>Origin:</strong> ${data.origin.name}<br>Snap Distance: ${data.origin.snap_dist.toFixed(1)} m`)
-    .addTo(markersLayer);
+  L.marker(destCoord, { icon: pin("Destination", "#b91c1c") })
+    .bindPopup(`<b>Destination:</b> ${d.destination.name}<br><b>GPS:</b> Lat ${d.destination.lat.toFixed(5)}, Lon ${d.destination.lon.toFixed(5)}<br>Road snap: ${d.destination.snap_dist} m`)
+    .addTo(markerLayer);
 
-  L.marker(targetCoord, { icon: destIcon })
-    .bindPopup(`<strong>Destination:</strong> ${data.destination.name}<br>Snap Distance: ${data.destination.snap_dist.toFixed(1)} m`)
-    .addTo(markersLayer);
-
-  mapInstance.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+  map.fitBounds(line.getBounds(), { padding: [40, 40] });
 }
 
-function updateMetrics(data) {
-  document.getElementById("val-dist-dijkstra").textContent = `${data.dijkstra.distance_meters.toFixed(2)} m`;
-  document.getElementById("val-dist-astar").textContent = `${data.astar.distance_meters.toFixed(2)} m`;
+function updateMetrics(d) {
+  $("val-dist-dijkstra").textContent = `${d.dijkstra.distance_meters.toFixed(2)} m`;
+  $("val-dist-astar").textContent = `${d.astar.distance_meters.toFixed(2)} m`;
+  $("val-nodes-dijkstra").textContent = d.dijkstra.nodes_expanded;
+  $("val-nodes-astar").textContent = d.astar.nodes_expanded;
+  $("val-time-dijkstra").textContent = `${d.dijkstra.elapsed_ms.toFixed(2)} ms`;
+  $("val-time-astar").textContent = `${d.astar.elapsed_ms.toFixed(2)} ms`;
 
-  document.getElementById("val-nodes-dijkstra").textContent = data.dijkstra.nodes_expanded;
-  document.getElementById("val-nodes-astar").textContent = data.astar.nodes_expanded;
+  const tp = $("tag-pruning");
+  tp.textContent = `${d.pruning_percentage.toFixed(1)}% reduction`;
+  tp.className = `metric-tag ${d.pruning_percentage > 0 ? "gain" : "match"}`;
 
-  document.getElementById("val-time-dijkstra").textContent = `${data.dijkstra.elapsed_ms.toFixed(2)} ms`;
-  document.getElementById("val-time-astar").textContent = `${data.astar.elapsed_ms.toFixed(2)} ms`;
-
-  const tagPruning = document.getElementById("tag-pruning");
-  tagPruning.textContent = `${data.pruning_percentage.toFixed(1)}% reduction`;
-  tagPruning.className = "metric-tag " + (data.pruning_percentage > 0 ? "gain" : "match");
-
-  const tagOptimality = document.getElementById("tag-optimality");
-  const isMatch = Math.abs(data.dijkstra.distance_meters - data.astar.distance_meters) < 0.01;
-  tagOptimality.textContent = isMatch ? "Identical (100%)" : "Discrepancy";
-  tagOptimality.className = "metric-tag " + (isMatch ? "match" : "gain");
+  const to = $("tag-optimality");
+  const match = Math.abs(d.dijkstra.distance_meters - d.astar.distance_meters) < 0.01;
+  to.textContent = match ? "Identical (100%)" : "Discrepancy";
+  to.className = `metric-tag ${match ? "match" : "gain"}`;
 }
 
-function setLoadingState(isLoading) {
-  const elements = [
-    document.getElementById("val-dist-dijkstra"),
-    document.getElementById("val-dist-astar"),
-    document.getElementById("val-nodes-dijkstra"),
-    document.getElementById("val-nodes-astar"),
-    document.getElementById("val-time-dijkstra"),
-    document.getElementById("val-time-astar"),
-  ];
-
-  elements.forEach((el) => {
-    if (el) {
-      if (isLoading) el.classList.add("skeleton");
-      else el.classList.remove("skeleton");
-    }
-  });
+function setLoading(on) {
+  ["val-dist-dijkstra", "val-dist-astar", "val-nodes-dijkstra", "val-nodes-astar", "val-time-dijkstra", "val-time-astar"]
+    .forEach((id) => $(id)?.classList.toggle("skeleton", on));
 }

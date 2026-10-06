@@ -1,142 +1,104 @@
-"""
-main.py - Campus Landmark A* Route Planner Runner
-Loads landmarks, computes routes using A* and Dijkstra, benchmarks performance, and exports an interactive map.
-"""
+"""CLI runner: benchmark A* vs Dijkstra and export route map."""
 
 import argparse
 import json
 import sys
 from pathlib import Path
-import folium
-from tabulate import tabulate
 
-from router import astar, dijkstra, load_campus_graph, snap_to_node
+from router import astar, dijkstra, load_campus_graph, build_coord_index, snap_to_node
 
 
-def load_landmarks(filepath: str = "data/landmarks.json") -> dict:
-    """Load campus landmarks catalog."""
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return {item["landmark_id"]: item for item in data}
+def load_landmarks(path: str = "data/landmarks.json") -> dict:
+    with open(path, encoding="utf-8") as f:
+        return {lm["landmark_id"]: lm for lm in json.load(f)}
 
 
-def generate_map(G, path, start_label, target_label, output_file="route_map.html"):
-    """Generate an interactive HTML map using Folium."""
-    coords = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in path]
-    if not coords:
-        return
+def generate_map(G, coords, path, sl, tl, out="route_map.html"):
+    """Generate Folium HTML map with single multi-polyline for background."""
+    import folium
 
-    # Center map on route centroid
-    center_lat = sum(c[0] for c in coords) / len(coords)
-    center_lon = sum(c[1] for c in coords) / len(coords)
+    pts = [(sl["latitude"], sl["longitude"])]
+    pts.extend([(coords[n][0], coords[n][1]) for n in path])
+    pts.append((tl["latitude"], tl["longitude"]))
 
-    fmap = folium.Map(location=[center_lat, center_lon], zoom_start=17, tiles="OpenStreetMap")
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    m = folium.Map(location=[cx, cy], zoom_start=17, tiles="OpenStreetMap")
 
-    # Draw campus road background in gray
-    for u, v in G.edges():
-        folium.PolyLine(
-            locations=[(G.nodes[u]["y"], G.nodes[u]["x"]), (G.nodes[v]["y"], G.nodes[v]["x"])],
-            color="#CCCCCC",
-            weight=1.5,
-            opacity=0.6,
-        ).add_to(fmap)
+    # Single multi-polyline for all background roads
+    bg = [[(coords[u][0], coords[u][1]), (coords[v][0], coords[v][1])] for u, v in G.edges()]
+    for seg in bg:
+        folium.PolyLine(seg, color="#CCC", weight=1.5, opacity=0.6).add_to(m)
 
-    # Draw calculated optimal path in bold blue
-    folium.PolyLine(locations=coords, color="#1E88E5", weight=5, opacity=0.9).add_to(fmap)
-
-    # Green pin for origin, Red pin for destination
-    folium.Marker(coords[0], popup=f"<b>Start:</b> {start_label}", icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(fmap)
-    folium.Marker(coords[-1], popup=f"<b>Destination:</b> {target_label}", icon=folium.Icon(color="red", icon="flag", prefix="fa")).add_to(fmap)
-
-    fmap.save(output_file)
-    print(f"[+] Saved interactive map: {output_file}")
+    folium.PolyLine(pts, color="#1E88E5", weight=5, opacity=0.9).add_to(m)
+    folium.Marker(
+        (sl["latitude"], sl["longitude"]),
+        popup=f"Start: {sl['name']}<br>GPS: {sl['latitude']:.5f}, {sl['longitude']:.5f}",
+        icon=folium.Icon(color="green", icon="play", prefix="fa"),
+    ).add_to(m)
+    folium.Marker(
+        (tl["latitude"], tl["longitude"]),
+        popup=f"Dest: {tl['name']}<br>GPS: {tl['latitude']:.5f}, {tl['longitude']:.5f}",
+        icon=folium.Icon(color="red", icon="flag", prefix="fa"),
+    ).add_to(m)
+    m.save(out)
+    print(f"[+] Map saved: {out}")
 
 
 def main():
-    # Handle UTF-8 encoding on Windows terminals
     if sys.stdout.encoding != "utf-8":
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
+        try: sys.stdout.reconfigure(encoding="utf-8")
+        except Exception: pass
 
-    parser = argparse.ArgumentParser(description="Campus Landmark Route Planner (A* vs Dijkstra)")
-    parser.add_argument("--start", type=str, default="MITS_HOSTEL_B", help="Start landmark ID")
-    parser.add_argument("--target", type=str, default="MITS_HOSTEL_G", help="Destination landmark ID")
-    parser.add_argument("--serve", action="store_true", help="Launch interactive web server & dashboard")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind web server (default: 8000)")
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description="Campus Route Planner (A* vs Dijkstra)")
+    ap.add_argument("--start", default="MITS_HOSTEL_B")
+    ap.add_argument("--target", default="MITS_HOSTEL_G")
+    ap.add_argument("--serve", action="store_true")
+    ap.add_argument("--port", type=int, default=8000)
+    args = ap.parse_args()
 
     if args.serve:
         from server import run_server
         run_server(port=args.port)
         return
 
-    print("=" * 75)
-    print("[*] CAMPUS LANDMARK ROUTE PLANNER (A* vs Dijkstra)")
-    print("=" * 75)
-
-    # 1. Load landmarks
     landmarks = load_landmarks()
     if args.start not in landmarks or args.target not in landmarks:
-        print(f"Error: Invalid landmark IDs. Available: {list(landmarks.keys())}")
+        print(f"Error: Invalid IDs. Available: {list(landmarks.keys())}")
         return
 
-    start_lm = landmarks[args.start]
-    target_lm = landmarks[args.target]
+    sl, tl = landmarks[args.start], landmarks[args.target]
+    print(f"Origin:      {sl['name']} (GPS: {sl['latitude']:.5f}, {sl['longitude']:.5f})")
+    print(f"Destination: {tl['name']} (GPS: {tl['latitude']:.5f}, {tl['longitude']:.5f})")
 
-    print(f"Origin:      {start_lm['name']} ({args.start})")
-    print(f"Destination: {target_lm['name']} ({args.target})")
-    print("-" * 75)
-
-    # 2. Load campus graph
-    print("Loading campus road network...")
     G = load_campus_graph()
-    print(f"Graph loaded: {G.number_of_nodes()} intersections, {G.number_of_edges()} road paths.")
+    coords = build_coord_index(G)
+    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
 
-    # 3. Snap landmarks to graph vertices
-    start_node, d1 = snap_to_node(G, start_lm["latitude"], start_lm["longitude"])
-    target_node, d2 = snap_to_node(G, target_lm["latitude"], target_lm["longitude"])
-    print(f"Snapped start -> Node {start_node} ({d1:.1f}m away)")
-    print(f"Snapped destination -> Node {target_node} ({d2:.1f}m away)")
-    print("-" * 75)
+    sn, d1 = snap_to_node(coords, sl["latitude"], sl["longitude"])
+    tn, d2 = snap_to_node(coords, tl["latitude"], tl["longitude"])
+    print(f"Snapped: start={sn} ({d1:.0f}m), dest={tn} ({d2:.0f}m)")
 
-    # 4. Run Algorithms
-    print("Running Dijkstra (Uninformed, h = 0)...")
-    dist_d, path_d, nodes_d, time_d = dijkstra(G, start_node, target_node)
+    dd, pd, nd, td = dijkstra(G, sn, tn)
+    da, pa, na, ta = astar(G, sn, tn, coords)
+    prune = ((nd - na) / nd * 100) if nd > 0 else 0
 
-    print("Running A* (Informed, Haversine)...")
-    dist_a, path_a, nodes_a, time_a = astar(G, start_node, target_node)
+    from tabulate import tabulate
+    print("\n" + tabulate([
+        ["Distance", f"{dd:.2f} m", f"{da:.2f} m"],
+        ["Nodes Expanded", nd, na],
+        ["Time", f"{td:.2f} ms", f"{ta:.2f} ms"],
+        ["Path Nodes", len(pd), len(pa)],
+        ["Pruning", "", f"{prune:.1f}%"],
+    ], headers=["Metric", "Dijkstra", "A*"], tablefmt="grid"))
 
-    # 5. Benchmark Comparison Table
-    pruning_pct = ((nodes_d - nodes_a) / nodes_d * 100.0) if nodes_d > 0 else 0.0
+    generate_map(G, coords, pa, sl, tl)
 
-    table = [
-        ["Total Distance", f"{dist_d:.2f} m", f"{dist_a:.2f} m", "100% Match (Optimal)"],
-        ["Nodes Explored", f"{nodes_d}", f"{nodes_a}", f"{pruning_pct:+.1f}% (Fewer nodes)"],
-        ["Execution Time", f"{time_d:.2f} ms", f"{time_a:.2f} ms", f"{time_d - time_a:+.2f} ms"],
-        ["Path Nodes Count", f"{len(path_d)}", f"{len(path_a)}", "Identical Path"],
-    ]
-
-    print("\n" + tabulate(table, headers=["Metric", "Dijkstra (h=0)", "A* (Haversine)", "Advantage"], tablefmt="grid"))
-
-    # 6. Generate interactive HTML web map
-    generate_map(G, path_a, start_lm["name"], target_lm["name"], "route_map.html")
-
-    # 7. Save JSON summary payload
-    summary = {
-        "status": "SUCCESS",
-        "start": args.start,
-        "target": args.target,
-        "total_distance_meters": round(dist_a, 2),
-        "nodes_expanded_astar": nodes_a,
-        "nodes_expanded_dijkstra": nodes_d,
-        "pruning_percentage": round(pruning_pct, 2),
-        "path_node_ids": path_a,
-    }
     with open("route_summary.json", "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-    print("[+] Saved summary payload: route_summary.json\n")
+        json.dump({"start": args.start, "target": args.target,
+                   "distance_m": round(da, 2), "nodes_astar": na,
+                   "nodes_dijkstra": nd, "pruning_pct": round(prune, 2)}, f, indent=2)
+    print("[+] Summary: route_summary.json")
 
 
 if __name__ == "__main__":

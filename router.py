@@ -1,189 +1,150 @@
-"""
-router.py - Campus Landmark Routing Engine
-Implements Haversine distance, Graph loading, and A* vs Dijkstra pathfinding algorithms.
-"""
+"""Routing engine: Haversine, graph loading, Dijkstra, A* pathfinding."""
 
 import heapq
 import math
 import time
 from pathlib import Path
+
 import networkx as nx
 import osmnx as ox
 
-# Constants
-EARTH_RADIUS_METERS = 6371000.0  # Volumetric mean Earth radius
-DEFAULT_CAMPUS_COORDS = (13.6288, 78.5024)  # MITS Campus Center (Lat, Lon)
+EARTH_RADIUS = 6371000.0
+CAMPUS_CENTER = (13.6288, 78.5024)
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate the straight-line (Great-Circle) distance between two GPS coordinates in meters."""
+    """Great-circle distance in meters between two GPS coordinates."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlam = math.radians(lon2 - lon1)
-
-    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * (math.sin(dlam / 2.0) ** 2)
-    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - min(1.0, a)))
-    return EARTH_RADIUS_METERS * c
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return EARTH_RADIUS * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0, 1 - a)))
 
 
 def load_campus_graph(cache_file: str = "data/campus_network.graphml") -> nx.DiGraph:
-    """
-    Load the campus road and footpath network.
-    Reads from the local cached file, or downloads via OSMnx if missing.
-    Simplifies multiple parallel edges between vertices by keeping min(length).
-    """
-    cache_path = Path(cache_file)
-    if cache_path.exists():
-        raw_graph = ox.load_graphml(filepath=cache_path)
+    """Load campus walk network from cache or OSMnx, return simplified DiGraph."""
+    cache = Path(cache_file)
+    if cache.exists():
+        raw = ox.load_graphml(filepath=cache)
     else:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_graph = ox.graph_from_point(DEFAULT_CAMPUS_COORDS, dist=1500, network_type="walk", simplify=True)
-        ox.save_graphml(raw_graph, filepath=cache_path)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        raw = ox.graph_from_point(CAMPUS_CENTER, dist=1500, network_type="walk", simplify=True)
+        ox.save_graphml(raw, filepath=cache)
 
-    # Convert MultiDiGraph to a clean, simple DiGraph with min(length)
     G = nx.DiGraph()
-    for node, data in raw_graph.nodes(data=True):
-        G.add_node(node, y=float(data.get("y", 0.0)), x=float(data.get("x", 0.0)))
-
-    for u, v, data in raw_graph.edges(data=True):
-        length = float(data.get("length", 1.0))
-        if not G.has_edge(u, v) or length < G[u][v]["length"]:
-            G.add_edge(u, v, length=length)
-
+    for n, d in raw.nodes(data=True):
+        G.add_node(n, y=float(d.get("y", 0)), x=float(d.get("x", 0)))
+    for u, v, d in raw.edges(data=True):
+        w = float(d.get("length", 1))
+        if not G.has_edge(u, v) or w < G[u][v]["length"]:
+            G.add_edge(u, v, length=w)
     return G
 
 
-def snap_to_node(G: nx.DiGraph, lat: float, lon: float) -> tuple[int, float]:
-    """
-    Snap any GPS point to the nearest road/path intersection (vertex) in the graph.
-    Returns (nearest_node_id, distance_in_meters).
-    """
-    best_node = None
-    min_dist = float("inf")
-
-    for node, data in G.nodes(data=True):
-        dist = haversine(lat, lon, data["y"], data["x"])
-        if dist < min_dist:
-            min_dist = dist
-            best_node = node
-
-    return best_node, min_dist
+def build_coord_index(G: nx.DiGraph) -> dict:
+    """Pre-extract node coordinates as {node: (lat, lon)} for fast lookup."""
+    return {n: (d["y"], d["x"]) for n, d in G.nodes(data=True)}
 
 
-def dijkstra(G: nx.DiGraph, start: int, goal: int):
-    """
-    Dijkstra's Algorithm (Uninformed Search, h = 0).
-    Explores outwards uniformly based solely on distance traveled: g(n).
-    Returns (total_distance, path, nodes_expanded, elapsed_ms).
-    """
+def snap_to_node(coords: dict, lat: float, lon: float) -> tuple:
+    """Snap GPS point to nearest graph node using pre-built coordinate index. O(N) scan."""
+    best, best_d = None, float("inf")
+    for n, (ny, nx_) in coords.items():
+        d = haversine(lat, lon, ny, nx_)
+        if d < best_d:
+            best, best_d = n, d
+    return best, best_d
+
+
+def _reconstruct(came_from: dict, goal: int) -> list:
+    """Trace back the path from goal to start."""
+    path = [goal]
+    while goal in came_from:
+        goal = came_from[goal]
+        path.append(goal)
+    path.reverse()
+    return path
+
+
+def dijkstra(G: nx.DiGraph, start: int, goal: int) -> tuple:
+    """Dijkstra (h=0). Returns (distance, path, nodes_expanded, elapsed_ms)."""
     t0 = time.perf_counter_ns()
-
     if start == goal:
         return 0.0, [start], 1, (time.perf_counter_ns() - t0) / 1e6
 
-    # Priority queue: (cost, counter, current_node)
-    counter = 0
-    queue = [(0.0, counter, start)]
-    g_score = {start: 0.0}
-    came_from = {}
-    visited = set()
-    nodes_expanded = 0
+    cnt = 0
+    heap = [(0.0, cnt, start)]
+    g = {start: 0.0}
+    prev = {}
+    closed = set()
+    expanded = 0
 
-    while queue:
-        cost, _, current = heapq.heappop(queue)
-
-        if current in visited or cost > g_score.get(current, float("inf")):
+    while heap:
+        cost, _, u = heapq.heappop(heap)
+        if u in closed:
             continue
-
-        visited.add(current)
-        nodes_expanded += 1
-
-        if current == goal:
+        closed.add(u)
+        expanded += 1
+        if u == goal:
             break
+        for v in G.successors(u):
+            nc = cost + G[u][v]["length"]
+            if nc < g.get(v, float("inf")):
+                g[v] = nc
+                prev[v] = u
+                cnt += 1
+                heapq.heappush(heap, (nc, cnt, v))
 
-        for neighbor in G.successors(current):
-            new_cost = cost + G[current][neighbor]["length"]
-            if new_cost < g_score.get(neighbor, float("inf")):
-                g_score[neighbor] = new_cost
-                came_from[neighbor] = current
-                counter += 1
-                heapq.heappush(queue, (new_cost, counter, neighbor))
-
-    elapsed_ms = (time.perf_counter_ns() - t0) / 1e6
-
-    if goal not in came_from and start != goal:
-        return None, [], nodes_expanded, elapsed_ms
-
-    # Reconstruct path
-    curr = goal
-    path = [curr]
-    while curr in came_from:
-        curr = came_from[curr]
-        path.append(curr)
-    path.reverse()
-
-    return g_score[goal], path, nodes_expanded, elapsed_ms
+    ms = (time.perf_counter_ns() - t0) / 1e6
+    if goal not in prev and start != goal:
+        return None, [], expanded, ms
+    return g[goal], _reconstruct(prev, goal), expanded, ms
 
 
-def astar(G: nx.DiGraph, start: int, goal: int):
-    """
-    A* Search Algorithm (Informed Search with Haversine Heuristic).
-    Directs the search cone toward the destination using: f(n) = g(n) + h(n).
-    Returns (total_distance, path, nodes_expanded, elapsed_ms).
-    """
+def astar(G: nx.DiGraph, start: int, goal: int, coords: dict = None) -> tuple:
+    """A* with Haversine heuristic. Returns (distance, path, nodes_expanded, elapsed_ms)."""
     t0 = time.perf_counter_ns()
-
     if start == goal:
         return 0.0, [start], 1, (time.perf_counter_ns() - t0) / 1e6
 
-    goal_lat = G.nodes[goal]["y"]
-    goal_lon = G.nodes[goal]["x"]
+    if coords is None:
+        coords = build_coord_index(G)
+    gy, gx = coords[goal]
 
-    def heuristic(node):
-        return haversine(G.nodes[node]["y"], G.nodes[node]["x"], goal_lat, goal_lon)
+    h_cache = {}
+    def h(n):
+        if n not in h_cache:
+            ny, nx_ = coords[n]
+            h_cache[n] = haversine(ny, nx_, gy, gx)
+        return h_cache[n]
 
-    # Priority queue: (f_score, h_score, counter, current_node)
-    # Breaking ties by h_score prioritizes nodes closer to the destination
-    counter = 0
-    start_h = heuristic(start)
-    queue = [(start_h, start_h, counter, start)]
-    g_score = {start: 0.0}
-    came_from = {}
-    visited = set()
-    nodes_expanded = 0
+    cnt = 0
+    sh = h(start)
+    heap = [(sh, sh, cnt, start)]
+    g = {start: 0.0}
+    prev = {}
+    closed = set()
+    expanded = 0
 
-    while queue:
-        f, h, _, current = heapq.heappop(queue)
-
-        if current in visited or f > g_score.get(current, float("inf")) + h + 1e-9:
+    while heap:
+        f, _, _, u = heapq.heappop(heap)
+        if u in closed:
             continue
-
-        visited.add(current)
-        nodes_expanded += 1
-
-        if current == goal:
+        closed.add(u)
+        expanded += 1
+        if u == goal:
             break
+        gu = g[u]
+        for v in G.successors(u):
+            ng = gu + G[u][v]["length"]
+            if ng < g.get(v, float("inf")):
+                g[v] = ng
+                prev[v] = u
+                hv = h(v)
+                cnt += 1
+                heapq.heappush(heap, (ng + hv, hv, cnt, v))
 
-        for neighbor in G.successors(current):
-            new_g = g_score[current] + G[current][neighbor]["length"]
-            if new_g < g_score.get(neighbor, float("inf")):
-                g_score[neighbor] = new_g
-                came_from[neighbor] = current
-                nh = heuristic(neighbor)
-                counter += 1
-                heapq.heappush(queue, (new_g + nh, nh, counter, neighbor))
-
-    elapsed_ms = (time.perf_counter_ns() - t0) / 1e6
-
-    if goal not in came_from and start != goal:
-        return None, [], nodes_expanded, elapsed_ms
-
-    # Reconstruct path
-    curr = goal
-    path = [curr]
-    while curr in came_from:
-        curr = came_from[curr]
-        path.append(curr)
-    path.reverse()
-
-    return g_score[goal], path, nodes_expanded, elapsed_ms
+    ms = (time.perf_counter_ns() - t0) / 1e6
+    if goal not in prev and start != goal:
+        return None, [], expanded, ms
+    return g[goal], _reconstruct(prev, goal), expanded, ms

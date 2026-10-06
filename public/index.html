@@ -9,7 +9,7 @@
   
   <!-- Leaflet CSS & JS from CDN -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
   <!-- Application Stylesheet -->
   <link rel="stylesheet" href="/style.css">
@@ -58,11 +58,13 @@
           <div class="form-group">
             <label for="origin-select">Origin Landmark</label>
             <select id="origin-select" name="origin"></select>
+            <div class="coord-tag" id="origin-coords">GPS: Lat --, Lon --</div>
           </div>
 
           <div class="form-group">
             <label for="dest-select">Destination Landmark</label>
             <select id="dest-select" name="destination"></select>
+            <div class="coord-tag" id="dest-coords">GPS: Lat --, Lon --</div>
           </div>
 
           <button type="submit" class="btn-primary" id="btn-submit">
@@ -142,6 +144,7 @@
         <span class="legend-item"><span class="legend-dot origin"></span> Origin Landmark</span>
         <span class="legend-item"><span class="legend-dot dest"></span> Destination Landmark</span>
         <span class="legend-item"><span class="legend-dot path"></span> Optimal Path</span>
+        <span class="legend-item"><span class="legend-dot landmark"></span> Campus Facilities</span>
         <span class="legend-item"><span class="legend-dot roads"></span> Campus Footpaths</span>
       </div>
     </section>
@@ -162,6 +165,6 @@
     </div>
   </footer>
 
-  <script src="/app.js"></script>
+  <script defer src="/app.js"></script>
 </body>
 </html>

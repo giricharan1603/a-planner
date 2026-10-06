@@ -21,16 +21,16 @@ ai-mini-pjt/
 │   ├── campus_network.graphml    # Cached campus street network
 │   └── landmarks.json            # Campus landmarks with GPS coordinates
 ├── public/                       # Web application frontend assets
-│   ├── index.html                # Main interactive dashboard
+│   ├── index.html                # Main interactive dashboard with coordinate displays
 │   ├── privacy.html              # Privacy Policy page
 │   ├── terms.html                # Terms of Service page
 │   ├── style.css                 # Clean institutional stylesheet
-│   ├── app.js                    # Client Leaflet map controller & API client
+│   ├── app.js                    # Client Leaflet map controller & manual route solver
 │   └── favicon.svg               # Custom vector icon
 ├── router.py                     # Algorithmic core (Haversine, Graph Snapping, Dijkstra, A*)
 ├── main.py                       # CLI driver (prints benchmark table & exports route_map.html)
 ├── server.py                     # Zero-dependency local web server & REST API
-├── test_planner.py               # Automated test suite (optimality, pruning, anti-pattern compliance)
+├── manual_test.py                # Manual testing & validation utility (on-demand execution)
 ├── requirements.txt              # Pinned Python packages
 ├── README.md                     # Project documentation
 └── .gitignore                    # Version control ignore rules
@@ -44,7 +44,8 @@ The web interface is built in strict accordance with professional engineering st
 * **Custom Branding & Favicon:** Custom vector SVG favicon; zero "Made with AI" tags or badges.
 * **Palette:** Grounded daylight palette using slate neutrals (`#f8fafc` canvas, `#ffffff` panels, `#0f172a` text, `#1e40af` primary blue). No purple gradients or rainbow accents.
 * **Sharp Geometry:** Clean 6px border radii; zero pill-shaped buttons.
-* **Real Interactive Demo:** Live Leaflet map displaying real OpenStreetMap tiles, actual footpaths, and route polyline with real-time metric benchmarks.
+* **Real Interactive Demo & Coordinate Display:** Live Leaflet map displaying real OpenStreetMap tiles, actual footpaths, all campus facility pins with exact GPS coordinates (Latitude, Longitude), live cursor GPS tracking, and route polyline with real-time metric benchmarks.
+* **Manual Execution:** Route computation triggers strictly when the user clicks "Compute Route" (no unwanted auto-running).
 * **No Marketing Gimmicks:** Zero fake reviews, zero fake counters, zero sparkle icons, and zero em dashes.
 * **Legal Transparency:** Dedicated [Privacy Policy](public/privacy.html) and [Terms of Service](public/terms.html) pages included.
 
@@ -67,7 +68,10 @@ python server.py
 ```powershell
 python main.py --serve
 ```
-Then open **[http://localhost:8000](http://localhost:8000)** in your browser to interact with the map, switch landmarks, view live benchmarks, and access legal pages.
+Then open **[http://localhost:8000](http://localhost:8000)** in your browser:
+- View all campus landmarks and their GPS coordinates directly on the map.
+- Select Origin and Destination landmarks to see their coordinates.
+- Click **Compute Route** to manually calculate and visualize the optimal path.
 
 ### Option B: Run Command-Line Benchmark
 ```powershell
@@ -78,9 +82,14 @@ Or specify origin and destination landmarks:
 python main.py --start MITS_HOSTEL_B --target MITS_HOSTEL_G
 ```
 
-### Option C: Run Automated Tests
+### Option C: Run Manual Verification & Testing
+Test a specific pair manually:
 ```powershell
-pytest test_planner.py -v
+python manual_test.py --start MITS_MAIN_GATE --target MITS_SPORTS
+```
+Or run validation across all consecutive campus landmark pairs:
+```powershell
+python manual_test.py --all
 ```
 
 ---
@@ -88,15 +97,17 @@ pytest test_planner.py -v
 ## 5. Sample Benchmark Output
 
 ```
-+------------------+------------------+------------------+----------------------+
-| Metric           | Dijkstra (h=0)   | A* (Haversine)   | Advantage            |
-+==================+==================+==================+======================+
-| Total Distance   | 3301.38 m        | 3301.38 m        | 100% Match (Optimal) |
-+------------------+------------------+------------------+----------------------+
-| Nodes Explored   | 73               | 51               | +30.1% (Fewer nodes) |
-+------------------+------------------+------------------+----------------------+
-| Execution Time   | 0.26 ms          | 0.32 ms          | Sub-millisecond      |
-+------------------+------------------+------------------+----------------------+
-| Path Nodes Count | 20               | 20               | Identical Path       |
-+------------------+------------------+------------------+----------------------+
++----------------+------------+-----------+
+| Metric         | Dijkstra   | A*        |
++================+============+===========+
+| Distance       | 3301.38 m  | 3301.38 m |
++----------------+------------+-----------+
+| Nodes Expanded | 76         | 64        |
++----------------+------------+-----------+
+| Time           | 0.26 ms    | 0.42 ms   |
++----------------+------------+-----------+
+| Path Nodes     | 20         | 20        |
++----------------+------------+-----------+
+| Pruning        |            | 15.8%     |
++----------------+------------+-----------+
 ```
