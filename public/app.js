@@ -55,6 +55,10 @@ function initMap() {
       setTimeout(() => { delete status.dataset.locked; }, 3000);
     }
   });
+
+  // Ensure proper Leaflet tile alignment
+  setTimeout(() => { if (map) map.invalidateSize(); }, 250);
+  window.addEventListener("resize", () => { if (map) map.invalidateSize(); });
 }
 
 async function loadLandmarks() {

@@ -51,9 +51,10 @@ def main():
         except Exception: pass
 
     ap = argparse.ArgumentParser(description="Campus Route Planner (A* vs Dijkstra)")
-    ap.add_argument("--start", default="MITS_HOSTEL_B")
-    ap.add_argument("--target", default="MITS_HOSTEL_G")
-    ap.add_argument("--serve", action="store_true")
+    ap.add_argument("--start", default="MITS_MAIN_GATE")
+    ap.add_argument("--target", default="MITS_SPORTS")
+    ap.add_argument("--all", action="store_true", help="Benchmark all campus landmark pairs")
+    ap.add_argument("--serve", action="store_true", help="Start web dashboard server")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
 
@@ -63,6 +64,25 @@ def main():
         return
 
     landmarks = load_landmarks()
+
+    if args.all:
+        import math
+        from tabulate import tabulate
+        G = load_campus_graph()
+        coords = build_coord_index(G)
+        lids = list(landmarks.keys())
+        rows = []
+        for i in range(len(lids) - 1):
+            sid, tid = lids[i], lids[i + 1]
+            sn, _ = snap_to_node(coords, landmarks[sid]["latitude"], landmarks[sid]["longitude"])
+            tn, _ = snap_to_node(coords, landmarks[tid]["latitude"], landmarks[tid]["longitude"])
+            dd, _, nd, _ = dijkstra(G, sn, tn)
+            da, _, na, _ = astar(G, sn, tn, coords)
+            prune = ((nd - na) / nd * 100) if nd > 0 else 0.0
+            opt = "100% (Pass)" if math.isclose(dd, da, rel_tol=1e-3) else "Mismatch"
+            rows.append([f"{sid} -> {tid}", f"{da:.1f} m", nd, na, f"{prune:+.1f}%", opt])
+        print("\n" + tabulate(rows, headers=["Route Pair", "Distance", "Dijkstra Nodes", "A* Nodes", "Pruning", "Optimality"], tablefmt="grid"))
+        return
     if args.start not in landmarks or args.target not in landmarks:
         print(f"Error: Invalid IDs. Available: {list(landmarks.keys())}")
         return

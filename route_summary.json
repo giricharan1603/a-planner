@@ -1,8 +1,8 @@
 {
-  "start": "MITS_HOSTEL_B",
-  "target": "MITS_HOSTEL_G",
-  "distance_m": 3301.38,
-  "nodes_astar": 51,
-  "nodes_dijkstra": 73,
-  "pruning_pct": 30.14
+  "start": "MITS_MAIN_GATE",
+  "target": "MITS_SPORTS",
+  "distance_m": 585.83,
+  "nodes_astar": 10,
+  "nodes_dijkstra": 24,
+  "pruning_pct": 58.33
 }

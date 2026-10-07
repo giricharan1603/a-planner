@@ -27,18 +27,12 @@ for lid, lm in LANDMARKS.items():
     node, dist = snap_to_node(COORDS, lm["latitude"], lm["longitude"])
     SNAPPED[lid] = {"node": node, "snap_dist": round(dist, 1)}
 
-# Pre-serialize network edges (sent once via GET)
-_EDGES = [[list(COORDS[u][::-1][::-1]), list(COORDS[v][::-1][::-1])] for u, v in GRAPH.edges()]
-# Store as [lat, lon] pairs
+# Pre-serialize network edges (sent once via GET /api/network)
 NETWORK_EDGES = [[[COORDS[u][0], COORDS[u][1]], [COORDS[v][0], COORDS[v][1]]] for u, v in GRAPH.edges()]
 NETWORK_JSON = json.dumps(NETWORK_EDGES).encode("utf-8")
 
-# Cache static files in memory
-_FILE_CACHE = {}
-def _read_cached(path: Path) -> bytes:
-    if path not in _FILE_CACHE:
-        _FILE_CACHE[path] = path.read_bytes()
-    return _FILE_CACHE[path]
+def _read_file(path: Path) -> bytes:
+    return path.read_bytes()
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -122,7 +116,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _file(self, path: Path, ctype: str):
         try:
-            data = _read_cached(path)
+            data = _read_file(path)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", len(data))
