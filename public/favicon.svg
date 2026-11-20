@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="12" fill="#0f172a"/>
+  <!-- Network Edge Line -->
+  <path d="M 18 46 L 32 18 L 46 36 L 32 18" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 18 46 L 46 36" stroke="#94a3b8" stroke-width="2" stroke-dasharray="3 3"/>
+  <!-- Network Vertices -->
+  <circle cx="18" cy="46" r="5" fill="#22c55e" stroke="#0f172a" stroke-width="2"/>
+  <circle cx="32" cy="18" r="5" fill="#38bdf8" stroke="#0f172a" stroke-width="2"/>
+  <circle cx="46" cy="36" r="5" fill="#ef4444" stroke="#0f172a" stroke-width="2"/>
+</svg>
